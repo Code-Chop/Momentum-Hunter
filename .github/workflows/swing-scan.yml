@@ -1,11 +1,15 @@
 name: Swing Scan
 
 on:
-  # Manual dispatch only. A `schedule:` block belongs here for unattended daily
-  # runs (e.g. cron "17 10 * * 1-5" for ~15:47 IST, offset off the hour to dodge
-  # GitHub's documented top-of-hour delays), but this is a demo deployment --
-  # running it unattended would spend Gemini quota every day whether or not
-  # anyone is looking at the output.
+  schedule:
+    # ~15:47 IST (10:17 UTC), weekdays, after the 15:30 close. Offset off the
+    # hour because GitHub delays scheduled runs when the top of the hour is busy.
+    # One Gemini call a day; the intraday workflow stays manual because running
+    # it every 30 minutes is what actually costs quota.
+    #
+    # Note: GitHub disables scheduled workflows after 60 days without a commit
+    # to the repo, so a long-dormant fork needs them re-enabled by hand.
+    - cron: "17 10 * * 1-5"
   workflow_dispatch: {}
 
 jobs:
@@ -17,6 +21,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+
+      # Fail with a readable message rather than a stack trace deep in the scan.
+      - name: Check required secrets
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          missing=""
+          for v in DATABASE_URL BOT_TOKEN CHAT_ID GEMINI_API_KEY; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            echo "Add them under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "All required secrets present."
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -28,3 +52,18 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
+
+      # A scheduled job that quietly fails every day is worse than no schedule
+      # at all -- the dashboard would go stale with nothing to indicate why.
+      - name: Report failure to Telegram
+        if: failure()
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ] && exit 0
+          curl -sS -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+            -d "chat_id=$CHAT_ID" \
+            --data-urlencode "text=⚠️ Scheduled swing scan failed. Dashboard data will be stale until this is fixed.
+          $RUN_URL" > /dev/null || true

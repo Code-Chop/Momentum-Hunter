@@ -73,7 +73,7 @@ An end-to-end algorithmic equity-momentum system for the Indian market (NSE). It
 - **Interface:** Telegram Bot API (long-polling) + a read-only web dashboard
 - **Data / compute:** pandas, NumPy
 - **Persistence:** Postgres (Supabase, cloud deployment) with CSV as a local-dev fallback; pickled session/token caches for Angel One (local only)
-- **Scan execution:** GitHub Actions, manually dispatched (cloud deployment)
+- **Scan execution:** GitHub Actions — swing scheduled daily, intraday manual (cloud deployment)
 
 ---
 
@@ -127,8 +127,8 @@ An end-to-end algorithmic equity-momentum system for the Indian market (NSE). It
 ├── scripts/
 │   └── init_db.py              # One-time Postgres table bootstrap
 └── .github/workflows/
-    ├── swing-scan.yml          # Swing scan job (manual dispatch)
-    ├── intraday-scan.yml       # Intraday scan job (manual dispatch)
+    ├── swing-scan.yml          # Swing scan (scheduled daily + manual)
+    ├── intraday-scan.yml       # Intraday scan (manual dispatch)
     └── keep-alive.yml          # Periodic ping so the free-tier API stays warm
 ```
 
@@ -247,7 +247,7 @@ The scanners, a read-only + chat API, and a web dashboard run entirely on free t
 | Layer | Service | Role |
 |---|---|---|
 | Database | [Supabase](https://supabase.com) free Postgres | Stores `swing_ranking`, `intraday_watchlist`, `performance_log`, `chat_message` |
-| Scan execution | GitHub Actions (`.github/workflows/*.yml`) | Runs `main.py` / `intraday_main.py --fast`, writes to Postgres, and sends the Telegram alert directly. Triggered manually (Actions tab, or chat's `/scan`) — see note below on why there's no cron |
+| Scan execution | GitHub Actions (`.github/workflows/*.yml`) | Runs `main.py` / `intraday_main.py --fast`, writes to Postgres, and sends the Telegram alert directly. Swing is scheduled daily after the close; intraday is manual |
 | API | [Render](https://render.com) free web service (FastAPI, `api/`) | `GET /api/swing/latest`, `GET /api/intraday/latest` for the dashboard, plus `/api/chat/*` for the web chat (see below) |
 | Dashboard | [Vercel](https://vercel.com) free tier (Next.js, `web/`) | Landing page, Swing/Intraday views, About, and Chat |
 
@@ -262,7 +262,9 @@ A browser-based command interface backed by `app/chat_commands.py`, which reuses
 1. **Supabase**: create a free project, copy the *pooled* connection string (Supavisor, port 6543, transaction mode — not the direct 5432 connection). Run `DATABASE_URL=... python scripts/init_db.py` once to create tables.
 2. **GitHub Actions**: repo secrets `DATABASE_URL`, `BOT_TOKEN`, `CHAT_ID`, `GEMINI_API_KEY`. Trigger a run from the Actions tab (`workflow_dispatch`) or via chat's `/scan`.
 
-   Both workflows are **manual-dispatch only** — deliberately. A `schedule:` block would make the dashboard self-updating, but this is a demo deployment, and an unattended daily cron spends Gemini quota (and hammers yfinance from a datacenter IP) whether or not anyone is looking at the results. The cron expressions are left in the workflow comments; uncommenting them is the whole change. The trade-off is that data is only as fresh as the last manual run.
+   **Swing runs on a schedule** (weekdays, ~15:47 IST, after the close) so the dashboard stays current on its own — one Gemini call a day. **Intraday is manual-dispatch only**, because running it every 30 minutes through market hours is what actually burns quota; trigger it from the Actions tab or chat's `/scan intraday fast` when you want it.
+
+   The swing workflow checks its secrets before doing any work, so a missing one fails in seconds with a readable message rather than a stack trace mid-scan — and pings Telegram on failure, since a scheduled job that fails silently every day just leaves the dashboard stale with no indication why.
 3. **Render**: new free Web Service, start command `uvicorn api.main:app --host 0.0.0.0 --port $PORT` (see `Procfile`). Env vars needed:
    - `DATABASE_URL` — same Supabase connection string
    - `CORS_ALLOW_ORIGINS` — your Vercel URL, e.g. `https://momentum-hunter.vercel.app`
