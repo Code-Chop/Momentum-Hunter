@@ -17,7 +17,8 @@ import pandas as pd
 from app.logger import get_logger
 from app.services.market_filter import MarketFilter
 from app.services.market_intelligence import MarketIntelligence
-from config import DATABASE_URL, CHAT_ACCESS_TOKEN
+from app.services.decision_service import DecisionService
+from config import DATABASE_URL, CHAT_ACCESS_TOKEN, DECISION_INTRADAY_STOP_PCT, DECISION_INTRADAY_TARGET_PCT
 
 logger = get_logger("chat_commands")
 
@@ -165,6 +166,111 @@ def cmd_scan(args: str) -> str:
     return f"⏳ Starting {label} scan ({eta})... Results will appear here when done."
 
 
+def cmd_decide(args: str) -> str:
+    mode_map = {"swing": "swing", "intraday": "intraday"}
+    mode = mode_map.get(args.strip().lower(), "both")
+    try:
+        svc = DecisionService()
+        decision = svc.get_decision(mode=mode)
+        snapshot = svc.intelligence.get_index_snapshot()
+        return DecisionService.format_message(decision, snapshot)
+    except Exception as e:
+        logger.error("Decision failed: %s", e)
+        return f"❌ Decision error: {e}"
+
+
+# Positions tracked from the web chat use a fixed pseudo chat_id -- this is a
+# single-user deployment, and web positions are intentionally kept separate
+# from telegram_bot.py's in-memory ones (different storage, no shared state).
+_WEB_CHAT_ID = "web"
+
+
+def cmd_add(args: str) -> str:
+    parts = args.strip().upper().split()
+    if len(parts) < 2:
+        return "Usage: /add SYMBOL ENTRY\nExample: /add RELIANCE 2450\n\nOr with custom levels:\n/add RELIANCE 2450 2425 2499"
+
+    symbol = parts[0]
+    try:
+        entry = float(parts[1])
+    except ValueError:
+        return "Entry price must be a number. Example: /add RELIANCE 2450"
+
+    if len(parts) >= 4:
+        try:
+            stop = float(parts[2])
+            target = float(parts[3])
+        except ValueError:
+            return "Stop/target must be numbers. Example: /add RELIANCE 2450 2425 2499"
+    else:
+        stop = round(entry * (1 - DECISION_INTRADAY_STOP_PCT / 100), 2)
+        target = round(entry * (1 + DECISION_INTRADAY_TARGET_PCT / 100), 2)
+
+    from app.db import add_tracked_position
+    add_tracked_position(symbol, entry, stop, target, _WEB_CHAT_ID)
+
+    return (
+        f"✅ Tracking {symbol}\n"
+        f"Entry  ₹{entry}\n"
+        f"Stop   ₹{stop}\n"
+        f"Target ₹{target}"
+    )
+
+
+def cmd_positions() -> str:
+    from app.db import list_tracked_positions
+    from app.services.angel_one import get_angel_one
+
+    df = list_tracked_positions(chat_id=_WEB_CHAT_ID)
+    if df.empty:
+        return "No open positions.\nAdd one: /add SYMBOL ENTRY_PRICE"
+
+    quotes = get_angel_one().get_ltp_bulk(df["symbol"].tolist())
+
+    lines = ["📊 Open Positions", ""]
+    pnls = []
+    for _, pos in df.iterrows():
+        price = quotes.get(pos["symbol"].upper())
+        if price:
+            pnl = round(((price - pos["entry"]) / pos["entry"]) * 100, 2)
+            pnls.append(pnl)
+            price_line = f"Now ₹{price} ({pnl:+.2f}%)"
+        else:
+            price_line = "price unavailable"
+        lines.append(f"{pos['symbol']}\n  Entry ₹{pos['entry']} | {price_line}\n  Stop ₹{pos['stop']} | Target ₹{pos['target']}")
+
+    if pnls:
+        lines.append(f"\nAvg P&L: {round(sum(pnls) / len(pnls), 2):+.2f}%")
+    lines.append("\n/exit SYMBOL or /exit all")
+    return "\n".join(lines)
+
+
+def cmd_exit(args: str) -> str:
+    from app.db import list_tracked_positions, remove_tracked_position
+
+    arg = args.strip().upper()
+    df = list_tracked_positions(chat_id=_WEB_CHAT_ID)
+    if df.empty:
+        return "No open positions to exit."
+
+    if arg == "ALL":
+        for pos_id in df["id"]:
+            remove_tracked_position(int(pos_id))
+        return f"✅ Cleared all {len(df)} position(s)."
+
+    if not arg:
+        syms = ", ".join(df["symbol"])
+        return f"Specify a symbol or 'all'.\nOpen: {syms}\nExample: /exit RELIANCE"
+
+    match = df[df["symbol"] == arg]
+    if match.empty:
+        syms = ", ".join(df["symbol"])
+        return f"'{arg}' not found.\nOpen positions: {syms}"
+
+    remove_tracked_position(int(match.iloc[0]["id"]))
+    return f"✅ {arg} removed (entry was ₹{match.iloc[0]['entry']})."
+
+
 def cmd_help() -> str:
     return (
         "Commands:\n"
@@ -172,15 +278,22 @@ def cmd_help() -> str:
         "/intraday — top 5 intraday picks from the last scan\n"
         "/status — market regime, VIX, last scan times\n"
         "/check — instant market pulse (no AI, ~5s)\n"
-        "/scan — run a swing scan (~5 min)\n"
-        "/scan intraday [fast] — run an intraday scan\n"
-        "/help — this list"
+        "/decide [swing|intraday] — AI entry/stop/target decision (~15-20s) 🔒\n"
+        "/add SYMBOL ENTRY [STOP TARGET] — track a position\n"
+        "/positions — live P&L for tracked positions\n"
+        "/exit SYMBOL|all — stop tracking a position\n"
+        "/scan [intraday [fast]] — run a scan (~30s-5min) 🔒\n"
+        "/help — this list\n"
+        "\n🔒 = requires the access code on this deployment"
     )
 
 
 def dispatch(message: str, token: str | None = None) -> str:
     text = message.strip()
     lower = text.lower()
+
+    def _authorized() -> bool:
+        return not CHAT_ACCESS_TOKEN or token == CHAT_ACCESS_TOKEN
 
     if lower.startswith("/top5"):
         return cmd_top5()
@@ -190,8 +303,18 @@ def dispatch(message: str, token: str | None = None) -> str:
         return cmd_status()
     if lower.startswith("/check"):
         return cmd_check()
+    if lower.startswith("/decide"):
+        if not _authorized():
+            return "🔒 /decide requires an access code on this deployment. Ask the owner for it."
+        return cmd_decide(text[len("/decide"):])
+    if lower.startswith("/add"):
+        return cmd_add(text[len("/add"):])
+    if lower.startswith("/positions"):
+        return cmd_positions()
+    if lower.startswith("/exit"):
+        return cmd_exit(text[len("/exit"):])
     if lower.startswith("/scan"):
-        if CHAT_ACCESS_TOKEN and token != CHAT_ACCESS_TOKEN:
+        if not _authorized():
             return "🔒 /scan requires an access code on this deployment. Ask the owner for it."
         return cmd_scan(text[len("/scan"):])
     if lower.startswith("/help") or lower.startswith("/start"):

@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { getChatHistory, sendChatMessage, type ChatMessage } from "@/lib/api";
 
-const SUGGESTIONS = ["/top5", "/intraday", "/status", "/check", "/scan", "/help"];
+const SUGGESTIONS = ["/top5", "/intraday", "/status", "/check", "/positions", "/decide", "/scan", "/help"];
+const GATED_PREFIXES = ["/scan", "/decide"];
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -37,8 +38,9 @@ export default function ChatPage() {
     if (!trimmed || sending) return;
 
     let token: string | undefined = localStorage.getItem("mh_chat_token") ?? undefined;
-    if (trimmed.toLowerCase().startsWith("/scan") && !token) {
-      const entered = window.prompt("Enter the access code to run a scan:");
+    const isGated = GATED_PREFIXES.some((p) => trimmed.toLowerCase().startsWith(p));
+    if (isGated && !token) {
+      const entered = window.prompt("Enter the access code for this command:");
       if (entered) {
         token = entered;
         localStorage.setItem("mh_chat_token", entered);
