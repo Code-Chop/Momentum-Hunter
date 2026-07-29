@@ -18,8 +18,8 @@ const PILLARS = [
     body: "Weights shift with the market: Nifty against its 200-DMA and the India VIX decide how many picks surface, and how defensively.",
   },
   {
-    title: "Runs itself, for free",
-    body: "Scheduled scans on GitHub Actions write to Postgres; a FastAPI service and this dashboard serve it. Every tier is free.",
+    title: "Free-tier by design",
+    body: "Scans run as GitHub Actions jobs writing to Postgres; a FastAPI service and this dashboard read it back. No paid infrastructure anywhere in the chain.",
   },
 ];
 
@@ -95,7 +95,7 @@ export default function HomePage() {
             <p>
               Momentum Hunter scores the entire Nifty 500 on multi-timeframe price behaviour, sends the
               strongest names to an LLM for a conviction read against live news, and publishes the blended
-              ranking here and to Telegram — on a schedule, with no server to keep alive.
+              ranking here and to Telegram — without a server to keep alive.
             </p>
             <div className="hero-actions">
               <Link href="/swing" className="btn btn-primary">View swing picks</Link>

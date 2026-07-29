@@ -1,10 +1,11 @@
 name: Swing Scan
 
 on:
-  schedule:
-    # ~15:47 IST (10:17 UTC), Mon-Fri, after market close. Offset off the
-    # hour/half-hour to dodge GitHub's documented top-of-hour scheduling delays.
-    - cron: "17 10 * * 1-5"
+  # Manual dispatch only. A `schedule:` block belongs here for unattended daily
+  # runs (e.g. cron "17 10 * * 1-5" for ~15:47 IST, offset off the hour to dodge
+  # GitHub's documented top-of-hour delays), but this is a demo deployment --
+  # running it unattended would spend Gemini quota every day whether or not
+  # anyone is looking at the output.
   workflow_dispatch: {}
 
 jobs:

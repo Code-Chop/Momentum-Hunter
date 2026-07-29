@@ -14,7 +14,7 @@ An end-to-end algorithmic equity-momentum system for the Indian market (NSE). It
 - **Market-regime awareness** — switches scoring weights based on Nifty vs 200-DMA and India VIX (bull / bear / high-VIX).
 - **Interactive Telegram bot** — trigger scans, get AI decisions, track live positions with stop/target alerts, and pull performance stats from chat.
 - **Backtesting suite** — weekly-rebalance simulation reporting CAGR, Sharpe, max drawdown, and win rate, plus AI-vs-momentum comparison backtests.
-- **Free-hosted web dashboard + chat** — a Next.js frontend (Swing/Intraday views, About, and a chat interface that mirrors the Telegram bot's commands) backed by a FastAPI + Postgres (Supabase) API, with scans automated on GitHub Actions cron. Live at [momentum-hunter.vercel.app](https://momentum-hunter.vercel.app). See [Hosting](#hosting-free-tier) below.
+- **Free-hosted web dashboard + chat** — a Next.js frontend (Swing/Intraday views, About, and a chat interface that mirrors the Telegram bot's commands) backed by a FastAPI + Postgres (Supabase) API, with scans running as GitHub Actions jobs. Live at [momentum-hunter.vercel.app](https://momentum-hunter.vercel.app). See [Hosting](#hosting-free-tier) below.
 
 ### Backtest results
 
@@ -73,7 +73,7 @@ An end-to-end algorithmic equity-momentum system for the Indian market (NSE). It
 - **Interface:** Telegram Bot API (long-polling) + a read-only web dashboard
 - **Data / compute:** pandas, NumPy
 - **Persistence:** Postgres (Supabase, cloud deployment) with CSV as a local-dev fallback; pickled session/token caches for Angel One (local only)
-- **Scheduling:** GitHub Actions cron (cloud deployment)
+- **Scan execution:** GitHub Actions, manually dispatched (cloud deployment)
 
 ---
 
@@ -127,8 +127,8 @@ An end-to-end algorithmic equity-momentum system for the Indian market (NSE). It
 ├── scripts/
 │   └── init_db.py              # One-time Postgres table bootstrap
 └── .github/workflows/
-    ├── swing-scan.yml          # Daily swing scan cron
-    └── intraday-scan.yml       # Intraday scan cron (market hours)
+    ├── swing-scan.yml          # Swing scan job (manual dispatch)
+    └── intraday-scan.yml       # Intraday scan job (manual dispatch)
 ```
 
 ---
@@ -246,7 +246,7 @@ The scanners, a read-only + chat API, and a web dashboard run entirely on free t
 | Layer | Service | Role |
 |---|---|---|
 | Database | [Supabase](https://supabase.com) free Postgres | Stores `swing_ranking`, `intraday_watchlist`, `performance_log`, `chat_message` |
-| Scheduled scans | GitHub Actions cron (`.github/workflows/*.yml`) | Runs `main.py` after close and `intraday_main.py --fast` every ~30 min during market hours; writes to Postgres and sends the Telegram alert directly. Automatic — keeps the dashboard fresh with no manual steps |
+| Scan execution | GitHub Actions (`.github/workflows/*.yml`) | Runs `main.py` / `intraday_main.py --fast`, writes to Postgres, and sends the Telegram alert directly. Triggered manually (Actions tab, or chat's `/scan`) — see note below on why there's no cron |
 | API | [Render](https://render.com) free web service (FastAPI, `api/`) | `GET /api/swing/latest`, `GET /api/intraday/latest` for the dashboard, plus `/api/chat/*` for the web chat (see below) |
 | Dashboard | [Vercel](https://vercel.com) free tier (Next.js, `web/`) | Landing page, Swing/Intraday views, About, and Chat |
 
@@ -254,12 +254,14 @@ The scanners, a read-only + chat API, and a web dashboard run entirely on free t
 
 A browser-based command interface backed by `app/chat_commands.py`, which reuses the exact same scan scripts and services as `telegram_bot.py` — so `/top5`, `/intraday`, `/status`, `/check` work identically to the bot, and `/scan` / `/scan intraday [fast]` runs a real scan as a background subprocess on the API server, posting the result into chat history when done.
 
-`/scan` is gated behind `CHAT_ACCESS_TOKEN` (sent as an `X-Chat-Token` header) so a public deployment can't have its Gemini/yfinance quota run up by strangers — read commands stay open for anyone to try. GitHub Actions and chat's `/scan` are complementary, not redundant: Actions runs on a schedule with no risk of being killed mid-scan; chat's `/scan` is for triggering a fresh one on demand (e.g. right before an interview), but since it runs on Render's own dyno, a long scan could in principle be interrupted if the free-tier instance sleeps mid-run — acceptable for occasional manual use, not for anything time-critical.
+`/scan` is gated behind `CHAT_ACCESS_TOKEN` (sent as an `X-Chat-Token` header) so a public deployment can't have its Gemini/yfinance quota run up by strangers — read commands stay open for anyone to try. Both GitHub Actions and chat's `/scan` trigger the same scripts, but they run in different places, and that matters: an Actions job runs on GitHub's own runners with a 6-hour budget and no idle-sleep, whereas chat's `/scan` spawns the scan as a subprocess on the Render instance itself — where a multi-minute run could in principle be interrupted if the free tier suspends the instance mid-scan. Chat's version is the convenient one; the Actions job is the reliable one.
 
 ### Setup
 
 1. **Supabase**: create a free project, copy the *pooled* connection string (Supavisor, port 6543, transaction mode — not the direct 5432 connection). Run `DATABASE_URL=... python scripts/init_db.py` once to create tables.
-2. **GitHub Actions**: repo secrets `DATABASE_URL`, `BOT_TOKEN`, `CHAT_ID`, `GEMINI_API_KEY`. Workflows run on schedule automatically, or manually via the Actions tab (`workflow_dispatch`).
+2. **GitHub Actions**: repo secrets `DATABASE_URL`, `BOT_TOKEN`, `CHAT_ID`, `GEMINI_API_KEY`. Trigger a run from the Actions tab (`workflow_dispatch`) or via chat's `/scan`.
+
+   Both workflows are **manual-dispatch only** — deliberately. A `schedule:` block would make the dashboard self-updating, but this is a demo deployment, and an unattended daily cron spends Gemini quota (and hammers yfinance from a datacenter IP) whether or not anyone is looking at the results. The cron expressions are left in the workflow comments; uncommenting them is the whole change. The trade-off is that data is only as fresh as the last manual run.
 3. **Render**: new free Web Service, start command `uvicorn api.main:app --host 0.0.0.0 --port $PORT` (see `Procfile`). Env vars needed:
    - `DATABASE_URL` — same Supabase connection string
    - `CORS_ALLOW_ORIGINS` — your Vercel URL, e.g. `https://momentum-hunter.vercel.app`

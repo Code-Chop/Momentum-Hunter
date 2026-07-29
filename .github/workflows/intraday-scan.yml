@@ -1,10 +1,7 @@
 name: Intraday Scan
 
 on:
-  schedule:
-    # Every 30 min through ~09:30-15:30 IST (04:00-10:00 UTC), Mon-Fri.
-    # Minutes offset from :00/:30 to dodge GitHub's top-of-hour scheduling delays.
-    - cron: "7,37 4-10 * * 1-5"
+  # Manual dispatch only -- see swing-scan.yml for why there's no `schedule:`.
   workflow_dispatch:
     inputs:
       fast:

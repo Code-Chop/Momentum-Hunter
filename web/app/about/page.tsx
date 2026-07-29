@@ -8,6 +8,7 @@ const PIPELINE = [
   { step: "AI conviction", detail: "Top candidates plus live news headlines go to Gemini, which returns a 1–10 conviction score blended additively into the quantitative rank." },
   { step: "Diversification", detail: "A cap of two names per sector, so a hot sector can't quietly become the whole portfolio." },
   { step: "Persistence", detail: "Results are written to Postgres as the source of truth, with CSV kept as a best-effort local convenience." },
+  { step: "Execution", detail: "Scans run as GitHub Actions jobs rather than on the API host — a scan takes minutes, and free-tier web instances sleep when idle and could be suspended mid-run. Triggered on demand here and from chat; a cron schedule is one config block away, left off so a demo deployment isn't spending LLM quota unattended." },
   { step: "Delivery", detail: "A Telegram alert fires directly from the scan; this dashboard and its chat read the same data." },
 ];
 
@@ -49,7 +50,7 @@ export default function AboutPage() {
         <p className="page-sub">
           An end-to-end momentum system for the Indian market: it ranks the Nifty 500 on price behaviour,
           layers an LLM conviction read on the strongest names, and publishes the result to Telegram and
-          this dashboard on a schedule.
+          this dashboard.
         </p>
       </div>
 
