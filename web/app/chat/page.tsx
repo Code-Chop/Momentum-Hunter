@@ -15,11 +15,10 @@ export default function ChatPage() {
 
   const refresh = async () => {
     try {
-      const history = await getChatHistory();
-      setMessages(history);
+      setMessages(await getChatHistory());
       setError(null);
     } catch {
-      setError("Couldn't reach the API — it may be waking up from sleep. Retrying...");
+      setError("Couldn't reach the API — free-tier instances sleep when idle. Retrying…");
     }
   };
 
@@ -38,8 +37,7 @@ export default function ChatPage() {
     if (!trimmed || sending) return;
 
     let token: string | undefined = localStorage.getItem("mh_chat_token") ?? undefined;
-    const isGated = GATED_PREFIXES.some((p) => trimmed.toLowerCase().startsWith(p));
-    if (isGated && !token) {
+    if (GATED_PREFIXES.some((p) => trimmed.toLowerCase().startsWith(p)) && !token) {
       const entered = window.prompt("Enter the access code for this command:");
       if (entered) {
         token = entered;
@@ -54,117 +52,65 @@ export default function ChatPage() {
       const reply = await sendChatMessage(trimmed, token);
       setMessages((m) => [...m, reply]);
     } catch {
-      setError("Couldn't send — check the API is running.");
+      setError("Couldn't send that — check the API is reachable.");
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto" }}>
-      <h1 style={{ marginBottom: 4 }}>Chat</h1>
-      <p style={{ color: "var(--text-secondary)", fontSize: 13.5, marginBottom: 20 }}>
-        Same engine as the Telegram bot — run scans, check status, and pull picks from here.
-      </p>
+    <div className="chat-wrap">
+      <div className="page-head">
+        <span className="label">Command interface</span>
+        <h1>Chat</h1>
+        <p className="page-sub">
+          The same engine behind the Telegram bot. Reads are open; running a scan or an AI decision needs
+          an access code. Your conversation stays in this browser.
+        </p>
+      </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+      <div className="chip-row">
         {SUGGESTIONS.map((s) => (
-          <button
-            key={s}
-            onClick={() => handleSend(s)}
-            disabled={sending}
-            style={{
-              fontSize: 12.5,
-              padding: "5px 12px",
-              borderRadius: 999,
-              border: "1px solid var(--border)",
-              background: "var(--surface-1)",
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-            }}
-          >
+          <button key={s} className="chip" onClick={() => handleSend(s)} disabled={sending}>
             {s}
           </button>
         ))}
       </div>
 
-      <div
-        style={{
-          border: "1px solid var(--border)",
-          borderRadius: 10,
-          background: "var(--surface-1)",
-          height: 440,
-          overflowY: "auto",
-          padding: 16,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
+      <div className="chat-log">
         {messages.length === 0 && (
-          <p style={{ color: "var(--text-muted)", fontSize: 13.5, margin: "auto" }}>
-            No messages yet — try one of the commands above.
+          <p className="chat-empty">
+            No messages yet — pick a command above, or type one below.
           </p>
         )}
         {messages.map((m, i) => (
-          <div
-            key={i}
-            style={{
-              alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-              maxWidth: "80%",
-              background: m.role === "user" ? "var(--seq-500)" : "var(--surface-2)",
-              color: m.role === "user" ? "#fff" : "var(--text-primary)",
-              padding: "8px 12px",
-              borderRadius: 10,
-              fontSize: 14,
-              whiteSpace: "pre-wrap",
-            }}
-          >
+          <div key={i} className={`bubble ${m.role === "user" ? "from-user" : "from-bot"}`}>
             {m.content}
           </div>
         ))}
+        {sending && <div className="bubble from-bot dots">working</div>}
         <div ref={bottomRef} />
       </div>
 
-      {error && (
-        <p style={{ color: "var(--status-critical)", fontSize: 12.5, marginTop: 8 }}>{error}</p>
-      )}
+      {error && <p className="err">{error}</p>}
 
       <form
+        className="chat-form"
         onSubmit={(e) => {
           e.preventDefault();
           handleSend(input);
         }}
-        style={{ display: "flex", gap: 8, marginTop: 12 }}
       >
         <input
+          className="chat-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type a command, e.g. /top5"
-          style={{
-            flex: 1,
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "var(--surface-1)",
-            color: "var(--text-primary)",
-            fontSize: 14,
-          }}
+          maxLength={500}
+          aria-label="Command input"
         />
-        <button
-          type="submit"
-          disabled={sending}
-          style={{
-            padding: "10px 18px",
-            borderRadius: 8,
-            border: "none",
-            background: "var(--seq-500)",
-            color: "#fff",
-            fontWeight: 600,
-            cursor: sending ? "default" : "pointer",
-          }}
-        >
-          {sending ? "…" : "Send"}
+        <button type="submit" className="btn btn-primary" disabled={sending}>
+          {sending ? "Sending" : "Send"}
         </button>
       </form>
     </div>

@@ -4,61 +4,54 @@ export type Column<T> = {
   key: keyof T;
   label: string;
   numeric?: boolean;
+  /** Render as a magnitude bar + value, scaled across the visible rows. */
+  meter?: boolean;
   format?: (value: T[keyof T], row: T) => ReactNode;
 };
+
+function Meter({ value, max }: { value: number; max: number }) {
+  const pct = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+  return (
+    <div className="meter">
+      <span className="meter-val">{value.toFixed(1)}</span>
+      <span className="meter-track">
+        <span
+          className={`meter-fill${value < 0 ? " is-neg" : ""}`}
+          style={{ width: `${value < 0 ? 4 : pct}%` }}
+        />
+      </span>
+    </div>
+  );
+}
 
 export default function RankingTable<T extends { symbol: string }>({
   columns,
   rows,
+  rankOffset = 1,
 }: {
   columns: Column<T>[];
   rows: T[];
+  rankOffset?: number;
 }) {
   if (rows.length === 0) {
-    return (
-      <div
-        style={{
-          border: "1px dashed var(--gridline)",
-          borderRadius: 10,
-          padding: "40px 20px",
-          textAlign: "center",
-          color: "var(--text-muted)",
-        }}
-      >
-        No data yet — check back after the next scheduled scan.
-      </div>
-    );
+    return <div className="empty">No data yet — check back after the next scheduled scan.</div>;
+  }
+
+  // Scale every meter column against the strongest value on screen.
+  const maxima = new Map<keyof T, number>();
+  for (const col of columns) {
+    if (!col.meter) continue;
+    maxima.set(col.key, Math.max(...rows.map((r) => Number(r[col.key]) || 0), 0));
   }
 
   return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        overflow: "auto",
-        maxHeight: 640,
-      }}
-    >
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+    <div className="table-wrap">
+      <table className="data">
         <thead>
           <tr>
+            <th aria-label="Rank" />
             {columns.map((col) => (
-              <th
-                key={String(col.key)}
-                style={{
-                  position: "sticky",
-                  top: 0,
-                  textAlign: col.numeric ? "right" : "left",
-                  padding: "10px 14px",
-                  borderBottom: "1px solid var(--gridline)",
-                  color: "var(--text-muted)",
-                  fontWeight: 600,
-                  fontSize: 12,
-                  textTransform: "uppercase",
-                  letterSpacing: 0.3,
-                  background: "var(--surface-1)",
-                }}
-              >
+              <th key={String(col.key)} className={col.numeric || col.meter ? "is-num" : undefined}>
                 {col.label}
               </th>
             ))}
@@ -66,22 +59,22 @@ export default function RankingTable<T extends { symbol: string }>({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr
-              key={row.symbol}
-              style={{ background: i % 2 === 0 ? "var(--surface-1)" : "var(--surface-2)" }}
-            >
+            <tr key={row.symbol}>
+              <td className="rank">{i + rankOffset}</td>
               {columns.map((col) => (
                 <td
                   key={String(col.key)}
-                  className={col.numeric ? "tabular-nums" : undefined}
-                  style={{
-                    padding: "9px 14px",
-                    borderBottom: "1px solid var(--gridline)",
-                    textAlign: col.numeric ? "right" : "left",
-                    whiteSpace: "nowrap",
-                  }}
+                  className={col.numeric || col.meter ? "is-num" : undefined}
                 >
-                  {col.format ? col.format(row[col.key], row) : String(row[col.key])}
+                  {col.meter ? (
+                    <Meter value={Number(row[col.key]) || 0} max={maxima.get(col.key) ?? 0} />
+                  ) : col.format ? (
+                    col.format(row[col.key], row)
+                  ) : (
+                    <span className={col.key === "symbol" ? "sym" : undefined}>
+                      {String(row[col.key])}
+                    </span>
+                  )}
                 </td>
               ))}
             </tr>
