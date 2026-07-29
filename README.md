@@ -14,7 +14,7 @@ An end-to-end algorithmic equity-momentum system for the Indian market (NSE). It
 - **Market-regime awareness** — switches scoring weights based on Nifty vs 200-DMA and India VIX (bull / bear / high-VIX).
 - **Interactive Telegram bot** — trigger scans, get AI decisions, track live positions with stop/target alerts, and pull performance stats from chat.
 - **Backtesting suite** — weekly-rebalance simulation reporting CAGR, Sharpe, max drawdown, and win rate, plus AI-vs-momentum comparison backtests.
-- **Free-hosted web dashboard** — a read-only Next.js frontend showing the latest swing picks and intraday watchlist, backed by a FastAPI + Postgres (Supabase) API, with scans automated on GitHub Actions cron. See [Hosting](#hosting-free-tier) below.
+- **Free-hosted web dashboard + chat** — a Next.js frontend (Swing/Intraday views, About, and a chat interface that mirrors the Telegram bot's commands) backed by a FastAPI + Postgres (Supabase) API, with scans automated on GitHub Actions cron. Live at [momentum-hunter.vercel.app](https://momentum-hunter.vercel.app). See [Hosting](#hosting-free-tier) below.
 
 ### Backtest results
 
@@ -239,28 +239,41 @@ python analyze_backtest.py       # CAGR / Sharpe / max drawdown / win rate
 
 ## Hosting (free tier)
 
-The scanners, a read-only API, and a web dashboard can run entirely on free tiers — useful for a live demo without paying for infra.
+**Live demo:** [momentum-hunter.vercel.app](https://momentum-hunter.vercel.app)
+
+The scanners, a read-only + chat API, and a web dashboard run entirely on free tiers.
 
 | Layer | Service | Role |
 |---|---|---|
-| Database | [Supabase](https://supabase.com) free Postgres | Stores `swing_ranking`, `intraday_watchlist`, `performance_log` |
-| Scheduled scans | GitHub Actions cron (`.github/workflows/*.yml`) | Runs `main.py` after close and `intraday_main.py --fast` every ~30 min during market hours; writes to Postgres and sends the Telegram alert directly |
-| API | [Render](https://render.com) free web service (FastAPI, `api/`) | Read-only `GET /api/swing/latest` and `GET /api/intraday/latest` for the dashboard |
-| Dashboard | [Vercel](https://vercel.com) free tier (Next.js, `web/`) | Renders the latest swing picks and intraday watchlist |
+| Database | [Supabase](https://supabase.com) free Postgres | Stores `swing_ranking`, `intraday_watchlist`, `performance_log`, `chat_message` |
+| Scheduled scans | GitHub Actions cron (`.github/workflows/*.yml`) | Runs `main.py` after close and `intraday_main.py --fast` every ~30 min during market hours; writes to Postgres and sends the Telegram alert directly. Automatic — keeps the dashboard fresh with no manual steps |
+| API | [Render](https://render.com) free web service (FastAPI, `api/`) | `GET /api/swing/latest`, `GET /api/intraday/latest` for the dashboard, plus `/api/chat/*` for the web chat (see below) |
+| Dashboard | [Vercel](https://vercel.com) free tier (Next.js, `web/`) | Landing page, Swing/Intraday views, About, and Chat |
+
+### Web chat (`/chat`)
+
+A browser-based command interface backed by `app/chat_commands.py`, which reuses the exact same scan scripts and services as `telegram_bot.py` — so `/top5`, `/intraday`, `/status`, `/check` work identically to the bot, and `/scan` / `/scan intraday [fast]` runs a real scan as a background subprocess on the API server, posting the result into chat history when done.
+
+`/scan` is gated behind `CHAT_ACCESS_TOKEN` (sent as an `X-Chat-Token` header) so a public deployment can't have its Gemini/yfinance quota run up by strangers — read commands stay open for anyone to try. GitHub Actions and chat's `/scan` are complementary, not redundant: Actions runs on a schedule with no risk of being killed mid-scan; chat's `/scan` is for triggering a fresh one on demand (e.g. right before an interview), but since it runs on Render's own dyno, a long scan could in principle be interrupted if the free-tier instance sleeps mid-run — acceptable for occasional manual use, not for anything time-critical.
 
 ### Setup
 
 1. **Supabase**: create a free project, copy the *pooled* connection string (Supavisor, port 6543, transaction mode — not the direct 5432 connection). Run `DATABASE_URL=... python scripts/init_db.py` once to create tables.
-2. **GitHub Actions**: add repo secrets `DATABASE_URL`, `BOT_TOKEN`, `CHAT_ID`, `GEMINI_API_KEY`. The workflows in `.github/workflows/` run on schedule automatically, or trigger manually via the Actions tab (`workflow_dispatch`).
-3. **Render**: new free Web Service pointed at this repo, start command `uvicorn api.main:app --host 0.0.0.0 --port $PORT` (see `Procfile`), env vars `DATABASE_URL` and `CORS_ALLOW_ORIGINS=https://<your-vercel-domain>`. Do **not** set `ANGEL_*` vars in the cloud deployment — see limitations below.
+2. **GitHub Actions**: repo secrets `DATABASE_URL`, `BOT_TOKEN`, `CHAT_ID`, `GEMINI_API_KEY`. Workflows run on schedule automatically, or manually via the Actions tab (`workflow_dispatch`).
+3. **Render**: new free Web Service, start command `uvicorn api.main:app --host 0.0.0.0 --port $PORT` (see `Procfile`). Env vars needed:
+   - `DATABASE_URL` — same Supabase connection string
+   - `CORS_ALLOW_ORIGINS` — your Vercel URL, e.g. `https://momentum-hunter.vercel.app`
+   - `CHAT_ACCESS_TOKEN` — a password of your choosing, gates `/scan` in the chat
+   - `BOT_TOKEN`, `CHAT_ID`, `GEMINI_API_KEY` — **required even here**, not just in GitHub Actions, because chat's `/scan` runs `main.py`/`intraday_main.py` as a subprocess on Render itself, using Render's own environment
+   - Do **not** set `ANGEL_*` vars in the cloud deployment — see limitations below
 4. **Vercel**: import the repo with root directory `web/`, set `NEXT_PUBLIC_API_BASE_URL` to your Render URL.
 
 ### Known limitations of the free-hosted deployment
 
 - **Cold starts**: Render's free tier sleeps after ~15 min idle; the first dashboard visit after a gap can take 30-50s.
 - **Angel One disabled in the cloud**: the swing scan never used it anyway; the intraday scan silently falls back to yfinance. Re-enabling it would need session-token persistence in Postgres instead of local pickle files (not implemented).
-- **`/performance` and `/liveperf` Telegram commands stay local-only**: they depend on `portfolio_backtester.py` / `track_returns.py`, which aren't part of the automated cloud pipeline.
-- **Telegram bot (`telegram_bot.py`) is not rearchitected for cloud hosting** — it still runs exactly as before via local long-polling. The cloud pipeline sends its own Telegram alerts directly (via `requests`) without needing an always-on bot process.
+- **`/performance` and `/liveperf` commands stay local-only**: they depend on `portfolio_backtester.py` / `track_returns.py`, which aren't part of the automated cloud pipeline.
+- **`telegram_bot.py` itself is not rearchitected for cloud hosting** — it still runs via local long-polling if you want it. The cloud pipeline sends Telegram alerts directly (via `requests`) without needing an always-on bot process, and the web chat covers the same read commands + `/scan` for anyone browsing the live site.
 - **yfinance from datacenter IPs** (GitHub Actions/Render) can be rate-limited more aggressively than from residential IPs — expect the occasional thin/empty scan.
 
 ---

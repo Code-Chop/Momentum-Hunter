@@ -136,9 +136,14 @@ def cmd_scan(args: str) -> str:
         from app.db import save_chat_message
         _scan_running[mode] = True
         try:
-            result = subprocess.run(cmd, timeout=600)
+            result = subprocess.run(cmd, timeout=600, capture_output=True, text=True)
             if result.returncode != 0:
-                save_chat_message("assistant", f"❌ {label} scan failed (exit {result.returncode}).")
+                tail = (result.stderr or result.stdout or "").strip().splitlines()
+                detail = "\n".join(tail[-8:]) if tail else "(no output captured)"
+                save_chat_message(
+                    "assistant",
+                    f"❌ {label} scan failed (exit {result.returncode}).\n\n{detail}",
+                )
                 return
             if csv_path.exists() and (time.time() - csv_path.stat().st_mtime) < 120:
                 save_chat_message("assistant", f"✅ {label} scan complete. Try /top5 or /intraday.")
