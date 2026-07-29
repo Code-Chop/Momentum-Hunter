@@ -98,6 +98,27 @@ def run_swing_scan() -> pd.DataFrame:
     results.sort(key=lambda x: x["score"], reverse=True)
     ranking_df = pd.DataFrame(results)
 
+    if ranking_df.empty:
+        # Every stock was rejected. Usually the data source returned nothing
+        # usable (rate-limited from a datacenter IP), not that the market has
+        # no momentum. An empty frame has no columns, so everything downstream
+        # would fail on ranking_df["symbol"] -- stop here with a clear reason
+        # and leave the last good scan in place.
+        logger.error(
+            "No stocks scored out of %d attempted — price data was unusable "
+            "for the entire universe. Leaving previous results untouched.",
+            len(stocks),
+        )
+        try:
+            telegram.send_message(
+                "⚠️ Swing scan produced no results — price data came back "
+                "unusable for the whole universe (likely a rate-limited data "
+                "source). Previous picks are unchanged."
+            )
+        except Exception:
+            pass
+        return ranking_df
+
     logger.info("Scan complete: %d stocks scored", len(ranking_df))
     logger.info("\n===== MOMENTUM RANKINGS =====\n%s", ranking_df.head(20).to_string(index=False))
 
