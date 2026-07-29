@@ -147,7 +147,16 @@ def cmd_scan(args: str, session_id: str = None) -> str:
     if fast_mode:
         cmd.append("--fast")
 
-    csv_path = Path("app/data/intraday_watchlist.csv" if mode == "intraday" else "app/data/final_ranking.csv")
+    def _latest_scan_time():
+        """Postgres is the source of truth. A CSV mtime only proves a file was
+        written -- it stayed 'fresh' even when every score in it was NaN."""
+        try:
+            df, _ = _latest_intraday_df() if mode == "intraday" else _latest_swing_df()
+            return None if df.empty or "scan_time" not in df.columns else df["scan_time"].iloc[0]
+        except Exception:
+            return None
+
+    before = _latest_scan_time()
 
     def run():
         from app.db import save_chat_message as _save
@@ -162,13 +171,15 @@ def cmd_scan(args: str, session_id: str = None) -> str:
                     f"❌ {label} scan failed (exit {result.returncode}).\n\n{detail}",
                 )
                 return
-            if csv_path.exists() and (time.time() - csv_path.stat().st_mtime) < 120:
+            after = _latest_scan_time()
+            if after is not None and after != before:
                 save_chat_message("assistant", f"✅ {label} scan complete. Try /top5 or /intraday.")
             else:
                 save_chat_message(
                     "assistant",
-                    f"⚠️ {label} scan ran but found no qualifying stocks (defensive/BEAR mode?). "
-                    f"Use /status to check regime.",
+                    f"⚠️ {label} scan finished but stored no new results — either no stocks "
+                    f"qualified (defensive/BEAR mode) or the price data came back unusable. "
+                    f"The previous results are still showing. Check /status for the regime.",
                 )
         except subprocess.TimeoutExpired:
             save_chat_message("assistant", f"❌ {label} scan timed out (>10 min).")

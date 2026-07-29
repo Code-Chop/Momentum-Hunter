@@ -7,6 +7,7 @@ callers should check is_db_configured() before using this module.
 import os
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, Boolean, DateTime, Date,
@@ -17,6 +18,9 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import DATABASE_URL
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 Base = declarative_base()
 
@@ -126,11 +130,39 @@ def create_all_tables():
 # Swing ranking
 # ---------------------------------------------------------------------------
 
+def _finite_rows(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """Drop rows whose key numbers aren't finite.
+
+    NaN scores are worse than no scores: they sort as no-ops (so the "ranking"
+    is really just universe order), and Postgres stores them happily while JSON
+    can't represent them -- which takes the API down on read rather than at
+    write time. Refuse them at the boundary.
+    """
+    if df.empty:
+        return df
+    clean = df.copy()
+    for col in cols:
+        if col in clean.columns:
+            clean = clean[np.isfinite(pd.to_numeric(clean[col], errors="coerce"))]
+    return clean
+
+
 def save_swing_ranking(ranking_df: pd.DataFrame, regime: str = None, vix: str = None):
+    clean = _finite_rows(ranking_df, ["score", "final_score"])
+    dropped = len(ranking_df) - len(clean)
+    if dropped:
+        logger.warning("Dropping %d swing row(s) with non-finite scores", dropped)
+    if clean.empty:
+        # Writing nothing beats overwriting the last good scan with garbage.
+        raise ValueError(
+            f"refusing to save swing ranking: no rows with finite scores "
+            f"(had {len(ranking_df)} row(s), all non-finite)"
+        )
+
     scan_time = datetime.utcnow()
     session = _session()
     try:
-        for _, row in ranking_df.iterrows():
+        for _, row in clean.iterrows():
             session.add(SwingRanking(
                 scan_time=scan_time,
                 regime=regime,
@@ -171,10 +203,20 @@ def load_latest_swing_ranking() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def save_intraday_watchlist(ranking_df: pd.DataFrame, fast_mode: bool = False):
+    clean = _finite_rows(ranking_df, ["score", "final_score"])
+    dropped = len(ranking_df) - len(clean)
+    if dropped:
+        logger.warning("Dropping %d intraday row(s) with non-finite scores", dropped)
+    if clean.empty:
+        raise ValueError(
+            f"refusing to save intraday watchlist: no rows with finite scores "
+            f"(had {len(ranking_df)} row(s), all non-finite)"
+        )
+
     scan_time = datetime.utcnow()
     session = _session()
     try:
-        for _, row in ranking_df.iterrows():
+        for _, row in clean.iterrows():
             session.add(IntradayWatchlist(
                 scan_time=scan_time,
                 fast_mode=fast_mode,

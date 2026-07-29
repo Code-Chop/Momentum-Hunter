@@ -128,7 +128,8 @@ An end-to-end algorithmic equity-momentum system for the Indian market (NSE). It
 │   └── init_db.py              # One-time Postgres table bootstrap
 └── .github/workflows/
     ├── swing-scan.yml          # Swing scan job (manual dispatch)
-    └── intraday-scan.yml       # Intraday scan job (manual dispatch)
+    ├── intraday-scan.yml       # Intraday scan job (manual dispatch)
+    └── keep-alive.yml          # Periodic ping so the free-tier API stays warm
 ```
 
 ---
@@ -272,7 +273,7 @@ A browser-based command interface backed by `app/chat_commands.py`, which reuses
 
 ### Known limitations of the free-hosted deployment
 
-- **Cold starts**: Render's free tier sleeps after ~15 min idle; the first dashboard visit after a gap can take 30-50s.
+- **Cold starts**: Render's free tier sleeps after ~15 min idle; the first dashboard visit after a gap can take 30-50s. `keep-alive.yml` pings `/health` every 10 minutes during waking hours to blunt this — deliberately not round-the-clock, since the free tier's 750 instance-hours/month is barely more than a month's 730 hours.
 - **Angel One disabled in the cloud**: the swing scan never used it anyway; the intraday scan silently falls back to yfinance. Re-enabling it would need session-token persistence in Postgres instead of local pickle files (not implemented).
 - **`/performance` and `/liveperf` commands stay local-only**: they depend on `portfolio_backtester.py` / `track_returns.py`, which aren't part of the automated cloud pipeline.
 - **`telegram_bot.py` itself is not rearchitected for cloud hosting** — it still runs via local long-polling if you want it. The cloud pipeline sends Telegram alerts directly (via `requests`) without needing an always-on bot process, and the web chat covers the same read commands + `/scan` for anyone browsing the live site.

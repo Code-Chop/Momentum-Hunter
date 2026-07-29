@@ -37,9 +37,16 @@ class MomentumCalculator:
 
             current = float(df["Close"].iloc[-1])
 
+            # Degenerate price data (an empty/partial download, a rate-limited
+            # provider) yields NaN. Every comparison below would then be False,
+            # so the filters fail *open* and a NaN score propagates all the way
+            # to the ranking. Reject it here instead.
+            if not math.isfinite(current) or current <= 0:
+                return None
+
             # 20 DMA — hard filter: stock must have short-term momentum
             ma20  = float(df["Close"].rolling(20).mean().iloc[-1])
-            if current < ma20:
+            if not math.isfinite(ma20) or current < ma20:
                 return None
 
             # 200 DMA — soft penalty for long-term downtrend (still shown, ranked lower)
@@ -117,6 +124,11 @@ class MomentumCalculator:
                 score -= MOMENTUM_RSI_OVERBOUGHT_PENALTY
             elif rsi < MOMENTUM_RSI_LOW:
                 score -= MOMENTUM_RSI_WEAK_PENALTY
+
+            # Final backstop: any NaN that crept in through an intermediate
+            # term would otherwise be returned as a real score.
+            if not math.isfinite(score):
+                return None
 
             return round(score, 2)
 
