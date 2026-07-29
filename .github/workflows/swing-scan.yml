@@ -1,0 +1,29 @@
+name: Swing Scan
+
+on:
+  schedule:
+    # ~15:47 IST (10:17 UTC), Mon-Fri, after market close. Offset off the
+    # hour/half-hour to dodge GitHub's documented top-of-hour scheduling delays.
+    - cron: "17 10 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run swing scan
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python main.py

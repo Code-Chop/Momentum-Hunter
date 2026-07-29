@@ -1,0 +1,13 @@
+beautifulsoup4==4.14.3
+browser-cookie3==0.20.1
+google-genai==2.7.0
+numpy==2.4.6
+pandas==3.0.3
+pytest==9.0.3
+python-dotenv==1.2.2
+requests==2.34.2
+yfinance==1.4.1
+sqlalchemy==2.0.36
+psycopg[binary]==3.2.3
+fastapi==0.115.6
+uvicorn[standard]==0.34.0

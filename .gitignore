@@ -1,0 +1,13 @@
+.env
+bot_api.txt
+venv/
+__pycache__/
+*.pyc
+app/data/*.csv
+!app/data/stocks.csv
+app/data/.cache/
+app/data/*.pkl
+app/data/*.txt
+app/services/*.csv
+logs/
+tempCodeRunnerFile.py

@@ -1,0 +1,28 @@
+What you need to do (in order)
+Step 1 — Rebuild your universe (one time, to add sector data):
+
+
+python build_universe.py
+This takes ~10-15 min. After this, stocks.csv will have a sector column and the diversification cap kicks in.
+
+Step 2 — Run the Telegram bot as a background process:
+
+
+python telegram_bot.py
+Keep this running in a separate terminal window. Then from your phone/Telegram you can type /status, /top5, etc. anytime.
+
+Step 3 — Daily workflow:
+
+
+python main.py          ← each morning before market
+python intraday_main.py ← during market hours (repeat as needed)
+Step 4 — After a week of daily main.py runs:
+
+
+python ai_backtest.py   ← compare if AI is adding alpha
+How the VIX regime changes your picks
+VIX	Regime	Picks sent
+< 20	BULL_LOW_VIX	Full top 10
+20-25	BULL_HIGH_VIX	Cautious top 7
+> 25	BULL_EXTREME_VIX	Minimal top 5
+NIFTY < 200 DMA	BEAR	Scanner exits — no picks

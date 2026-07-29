@@ -1,0 +1,39 @@
+name: Intraday Scan
+
+on:
+  schedule:
+    # Every 30 min through ~09:30-15:30 IST (04:00-10:00 UTC), Mon-Fri.
+    # Minutes offset from :00/:30 to dodge GitHub's top-of-hour scheduling delays.
+    - cron: "7,37 4-10 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      fast:
+        description: "Fast mode (scan only yesterday's/prior top-20 instead of full universe)"
+        type: boolean
+        default: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run intraday scan
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ "${{ inputs.fast }}" = "true" ]; then
+            python intraday_main.py --fast
+          else
+            python intraday_main.py
+          fi
