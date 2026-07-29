@@ -17,7 +17,7 @@ import pandas as pd
 from app.logger import get_logger
 from app.services.market_filter import MarketFilter
 from app.services.market_intelligence import MarketIntelligence
-from config import DATABASE_URL
+from config import DATABASE_URL, CHAT_ACCESS_TOKEN
 
 logger = get_logger("chat_commands")
 
@@ -173,7 +173,7 @@ def cmd_help() -> str:
     )
 
 
-def dispatch(message: str) -> str:
+def dispatch(message: str, token: str | None = None) -> str:
     text = message.strip()
     lower = text.lower()
 
@@ -186,6 +186,8 @@ def dispatch(message: str) -> str:
     if lower.startswith("/check"):
         return cmd_check()
     if lower.startswith("/scan"):
+        if CHAT_ACCESS_TOKEN and token != CHAT_ACCESS_TOKEN:
+            return "🔒 /scan requires an access code on this deployment. Ask the owner for it."
         return cmd_scan(text[len("/scan"):])
     if lower.startswith("/help") or lower.startswith("/start"):
         return cmd_help()

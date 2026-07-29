@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 
 from app.db import is_db_configured, save_chat_message, load_chat_history
 from app.chat_commands import dispatch
@@ -34,9 +35,9 @@ def get_history():
 
 
 @router.post("/send", response_model=ChatMessageOut)
-def send_message(req: SendRequest):
+def send_message(req: SendRequest, x_chat_token: Optional[str] = Header(None, alias="X-Chat-Token")):
     _require_db()
     save_chat_message("user", req.message)
-    reply = dispatch(req.message)
+    reply = dispatch(req.message, token=x_chat_token)
     save_chat_message("assistant", reply)
     return ChatMessageOut(role="assistant", content=reply, created_at=datetime.utcnow())

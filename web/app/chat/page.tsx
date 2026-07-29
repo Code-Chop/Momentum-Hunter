@@ -35,11 +35,21 @@ export default function ChatPage() {
   async function handleSend(text: string) {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
+
+    let token: string | undefined = localStorage.getItem("mh_chat_token") ?? undefined;
+    if (trimmed.toLowerCase().startsWith("/scan") && !token) {
+      const entered = window.prompt("Enter the access code to run a scan:");
+      if (entered) {
+        token = entered;
+        localStorage.setItem("mh_chat_token", entered);
+      }
+    }
+
     setSending(true);
     setInput("");
     setMessages((m) => [...m, { role: "user", content: trimmed, created_at: null }]);
     try {
-      const reply = await sendChatMessage(trimmed);
+      const reply = await sendChatMessage(trimmed, token);
       setMessages((m) => [...m, reply]);
     } catch {
       setError("Couldn't send — check the API is running.");

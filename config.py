@@ -13,6 +13,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 GITHUB_PAT = os.getenv("GITHUB_PAT", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")  # "owner/repo", for workflow_dispatch
 
+# Gate on cost-incurring chat commands (/scan). Empty = no gate (local dev).
+CHAT_ACCESS_TOKEN = os.getenv("CHAT_ACCESS_TOKEN", "")
+
 # ── Market Regime ──────────────────────────────────────────────────────
 VIX_HIGH = 20.0        # elevated fear → top 7 only
 VIX_EXTREME = 25.0     # extreme fear  → top 5 only

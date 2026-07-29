@@ -59,10 +59,13 @@ export function getChatHistory() {
   return fetchJson<ChatMessage[]>("/api/chat/history");
 }
 
-export async function sendChatMessage(message: string): Promise<ChatMessage> {
+export async function sendChatMessage(message: string, token?: string): Promise<ChatMessage> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["X-Chat-Token"] = token;
+
   const res = await fetch(`${API_BASE_URL}/api/chat/send`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ message }),
   });
   if (!res.ok) {
