@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException, Header
 
 from app.db import is_db_configured, save_chat_message, load_chat_history
@@ -16,7 +16,8 @@ class ChatMessageOut(BaseModel):
 
 
 class SendRequest(BaseModel):
-    message: str
+    # Commands are short; the cap stops a scripted POST filling the free-tier DB.
+    message: str = Field(min_length=1, max_length=500)
 
 
 def _require_db():
@@ -25,9 +26,9 @@ def _require_db():
 
 
 @router.get("/history", response_model=list[ChatMessageOut])
-def get_history():
+def get_history(x_session_id: Optional[str] = Header(None, alias="X-Session-Id")):
     _require_db()
-    df = load_chat_history()
+    df = load_chat_history(session_id=x_session_id)
     return [
         ChatMessageOut(role=r.role, content=r.content, created_at=r.created_at)
         for r in df.itertuples()
@@ -35,9 +36,13 @@ def get_history():
 
 
 @router.post("/send", response_model=ChatMessageOut)
-def send_message(req: SendRequest, x_chat_token: Optional[str] = Header(None, alias="X-Chat-Token")):
+def send_message(
+    req: SendRequest,
+    x_chat_token: Optional[str] = Header(None, alias="X-Chat-Token"),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
+):
     _require_db()
-    save_chat_message("user", req.message)
-    reply = dispatch(req.message, token=x_chat_token)
-    save_chat_message("assistant", reply)
+    save_chat_message("user", req.message, x_session_id)
+    reply = dispatch(req.message, token=x_chat_token, session_id=x_session_id)
+    save_chat_message("assistant", reply, x_session_id)
     return ChatMessageOut(role="assistant", content=reply, created_at=datetime.utcnow())

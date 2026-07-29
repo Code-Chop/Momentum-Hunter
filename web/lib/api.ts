@@ -55,12 +55,33 @@ export type ChatMessage = {
   created_at: string | null;
 };
 
-export function getChatHistory() {
-  return fetchJson<ChatMessage[]>("/api/chat/history");
+/** Per-browser id so each visitor gets their own conversation, not a shared log. */
+export function getSessionId(): string {
+  const KEY = "mh_session_id";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+}
+
+export async function getChatHistory(): Promise<ChatMessage[]> {
+  const res = await fetch(`${API_BASE_URL}/api/chat/history`, {
+    headers: { "X-Session-Id": getSessionId() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Request to /api/chat/history failed with status ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function sendChatMessage(message: string, token?: string): Promise<ChatMessage> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Session-Id": getSessionId(),
+  };
   if (token) headers["X-Chat-Token"] = token;
 
   const res = await fetch(`${API_BASE_URL}/api/chat/send`, {

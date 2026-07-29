@@ -110,6 +110,9 @@ class TrackedPosition(Base):
 class ChatMessage(Base):
     __tablename__ = "chat_message"
     id = Column(Integer, primary_key=True)
+    # Per-browser session, so visitors don't see each other's conversations
+    # on the public deployment. Null only for pre-session-scoping rows.
+    session_id = Column(String, index=True)
     role = Column(String, nullable=False)  # "user" | "assistant"
     content = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -295,24 +298,22 @@ def mark_position_alerted(position_id: int, stop: bool = False, target: bool = F
 # Chat history (web dashboard command chat)
 # ---------------------------------------------------------------------------
 
-def save_chat_message(role: str, content: str):
+def save_chat_message(role: str, content: str, session_id: str = None):
     session = _session()
     try:
-        session.add(ChatMessage(role=role, content=content))
+        session.add(ChatMessage(role=role, content=content, session_id=session_id))
         session.commit()
     finally:
         session.close()
 
 
-def load_chat_history(limit: int = 100) -> pd.DataFrame:
+def load_chat_history(session_id: str = None, limit: int = 100) -> pd.DataFrame:
     session = _session()
     try:
-        rows = (
-            session.query(ChatMessage)
-            .order_by(ChatMessage.created_at.desc())
-            .limit(limit)
-            .all()
-        )
+        query = session.query(ChatMessage)
+        # No session_id => return nothing rather than everyone's history.
+        query = query.filter(ChatMessage.session_id == session_id) if session_id else query.filter(False)
+        rows = query.order_by(ChatMessage.created_at.desc()).limit(limit).all()
         rows.reverse()
         return pd.DataFrame([{
             "id": r.id, "role": r.role, "content": r.content, "created_at": r.created_at,

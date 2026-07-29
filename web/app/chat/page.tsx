@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { getChatHistory, sendChatMessage, type ChatMessage } from "@/lib/api";
 
 const SUGGESTIONS = ["/top5", "/intraday", "/status", "/check", "/positions", "/decide", "/scan", "/help"];
-const GATED_PREFIXES = ["/scan", "/decide"];
+const GATED_PREFIXES = ["/scan", "/decide", "/add", "/exit"];
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);

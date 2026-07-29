@@ -23,6 +23,13 @@ from config import DATABASE_URL, CHAT_ACCESS_TOKEN, DECISION_INTRADAY_STOP_PCT, 
 logger = get_logger("chat_commands")
 
 _scan_running = {"swing": False, "intraday": False}
+_scan_lock = threading.Lock()
+
+# /check hits yfinance/Angel One on every call. Cache briefly so a hammered
+# public endpoint can't get our IP rate-limited by Yahoo -- which would also
+# break the scans, since they use the same data source.
+_CHECK_TTL_SECONDS = 60
+_check_cache: dict = {"at": 0.0, "text": None}
 
 
 def _latest_swing_df() -> tuple[pd.DataFrame, str]:
@@ -108,24 +115,33 @@ def cmd_status() -> str:
 
 
 def cmd_check() -> str:
+    now = time.time()
+    if _check_cache["text"] and (now - _check_cache["at"]) < _CHECK_TTL_SECONDS:
+        return _check_cache["text"]
     try:
         intel = MarketIntelligence()
         snapshot = intel.get_index_snapshot()
-        return intel.format_check_message(snapshot)
+        text = intel.format_check_message(snapshot)
+        _check_cache.update(at=now, text=text)
+        return text
     except Exception as e:
         logger.error("Check failed: %s", e)
         return f"❌ Market data error: {e}"
 
 
-def cmd_scan(args: str) -> str:
+def cmd_scan(args: str, session_id: str = None) -> str:
     parts = args.strip().lower().split()
     fast_mode = "fast" in parts
     mode = "intraday" if "intraday" in parts else "swing"
     label = ("Intraday fast" if fast_mode else "Intraday") if mode == "intraday" else "Swing"
     eta = "~30-45s" if fast_mode else "~5 min"
 
-    if _scan_running[mode]:
-        return f"⏳ {label} scan already running. Wait for it to finish."
+    # Claim the slot under a lock *before* starting the thread -- checking here
+    # but setting inside the thread would let two rapid calls both get through.
+    with _scan_lock:
+        if _scan_running[mode]:
+            return f"⏳ {label} scan already running. Wait for it to finish."
+        _scan_running[mode] = True
 
     cmd = [sys.executable, "intraday_main.py"] if mode == "intraday" else [sys.executable, "main.py"]
     if fast_mode:
@@ -134,8 +150,8 @@ def cmd_scan(args: str) -> str:
     csv_path = Path("app/data/intraday_watchlist.csv" if mode == "intraday" else "app/data/final_ranking.csv")
 
     def run():
-        from app.db import save_chat_message
-        _scan_running[mode] = True
+        from app.db import save_chat_message as _save
+        save_chat_message = lambda role, text: _save(role, text, session_id)
         try:
             result = subprocess.run(cmd, timeout=600, capture_output=True, text=True)
             if result.returncode != 0:
@@ -279,21 +295,24 @@ def cmd_help() -> str:
         "/status — market regime, VIX, last scan times\n"
         "/check — instant market pulse (no AI, ~5s)\n"
         "/decide [swing|intraday] — AI entry/stop/target decision (~15-20s) 🔒\n"
-        "/add SYMBOL ENTRY [STOP TARGET] — track a position\n"
         "/positions — live P&L for tracked positions\n"
-        "/exit SYMBOL|all — stop tracking a position\n"
+        "/add SYMBOL ENTRY [STOP TARGET] — track a position 🔒\n"
+        "/exit SYMBOL|all — stop tracking a position 🔒\n"
         "/scan [intraday [fast]] — run a scan (~30s-5min) 🔒\n"
         "/help — this list\n"
         "\n🔒 = requires the access code on this deployment"
     )
 
 
-def dispatch(message: str, token: str | None = None) -> str:
+def dispatch(message: str, token: str | None = None, session_id: str | None = None) -> str:
     text = message.strip()
     lower = text.lower()
 
     def _authorized() -> bool:
         return not CHAT_ACCESS_TOKEN or token == CHAT_ACCESS_TOKEN
+
+    def _locked(cmd: str) -> str:
+        return f"🔒 {cmd} requires an access code on this deployment. Ask the owner for it."
 
     if lower.startswith("/top5"):
         return cmd_top5()
@@ -304,19 +323,18 @@ def dispatch(message: str, token: str | None = None) -> str:
     if lower.startswith("/check"):
         return cmd_check()
     if lower.startswith("/decide"):
-        if not _authorized():
-            return "🔒 /decide requires an access code on this deployment. Ask the owner for it."
-        return cmd_decide(text[len("/decide"):])
-    if lower.startswith("/add"):
-        return cmd_add(text[len("/add"):])
+        # Calls Gemini -- gated so strangers can't spend the API quota.
+        return cmd_decide(text[len("/decide"):]) if _authorized() else _locked("/decide")
     if lower.startswith("/positions"):
         return cmd_positions()
+    # Position writes are gated: these are the owner's real tracked trades,
+    # and an ungated /exit all would let anyone wipe them.
+    if lower.startswith("/add"):
+        return cmd_add(text[len("/add"):]) if _authorized() else _locked("/add")
     if lower.startswith("/exit"):
-        return cmd_exit(text[len("/exit"):])
+        return cmd_exit(text[len("/exit"):]) if _authorized() else _locked("/exit")
     if lower.startswith("/scan"):
-        if not _authorized():
-            return "🔒 /scan requires an access code on this deployment. Ask the owner for it."
-        return cmd_scan(text[len("/scan"):])
+        return cmd_scan(text[len("/scan"):], session_id) if _authorized() else _locked("/scan")
     if lower.startswith("/help") or lower.startswith("/start"):
         return cmd_help()
 
