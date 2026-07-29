@@ -48,3 +48,25 @@ export function getLatestSwingRanking() {
 export function getLatestIntradayWatchlist() {
   return fetchJson<IntradayWatchlistResponse>("/api/intraday/latest");
 }
+
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  created_at: string | null;
+};
+
+export function getChatHistory() {
+  return fetchJson<ChatMessage[]>("/api/chat/history");
+}
+
+export async function sendChatMessage(message: string): Promise<ChatMessage> {
+  const res = await fetch(`${API_BASE_URL}/api/chat/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) {
+    throw new Error(`Request to /api/chat/send failed with status ${res.status}`);
+  }
+  return res.json();
+}

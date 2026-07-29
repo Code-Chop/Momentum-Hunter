@@ -1,0 +1,42 @@
+from datetime import datetime
+from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+
+from app.db import is_db_configured, save_chat_message, load_chat_history
+from app.chat_commands import dispatch
+
+router = APIRouter(prefix="/api/chat")
+
+
+class ChatMessageOut(BaseModel):
+    role: str
+    content: str
+    created_at: datetime | None = None
+
+
+class SendRequest(BaseModel):
+    message: str
+
+
+def _require_db():
+    if not is_db_configured():
+        raise HTTPException(status_code=503, detail="DATABASE_URL not configured — chat history needs Postgres")
+
+
+@router.get("/history", response_model=list[ChatMessageOut])
+def get_history():
+    _require_db()
+    df = load_chat_history()
+    return [
+        ChatMessageOut(role=r.role, content=r.content, created_at=r.created_at)
+        for r in df.itertuples()
+    ]
+
+
+@router.post("/send", response_model=ChatMessageOut)
+def send_message(req: SendRequest):
+    _require_db()
+    save_chat_message("user", req.message)
+    reply = dispatch(req.message)
+    save_chat_message("assistant", reply)
+    return ChatMessageOut(role="assistant", content=reply, created_at=datetime.utcnow())

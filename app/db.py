@@ -28,12 +28,21 @@ def is_db_configured() -> bool:
     return bool(DATABASE_URL)
 
 
+def _normalize_url(url: str) -> str:
+    """Force the psycopg3 driver regardless of the scheme Supabase/Render hand us."""
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://"):]
+    return url
+
+
 def get_engine():
     global _engine
     if _engine is None:
         if not DATABASE_URL:
             raise RuntimeError("DATABASE_URL is not set")
-        _engine = create_engine(DATABASE_URL, poolclass=NullPool, pool_pre_ping=True)
+        _engine = create_engine(_normalize_url(DATABASE_URL), poolclass=NullPool, pool_pre_ping=True)
     return _engine
 
 
@@ -96,6 +105,14 @@ class TrackedPosition(Base):
     alerted_stop = Column(Boolean, default=False)
     alerted_target = Column(Boolean, default=False)
     added_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_message"
+    id = Column(Integer, primary_key=True)
+    role = Column(String, nullable=False)  # "user" | "assistant"
+    content = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 def create_all_tables():
@@ -270,5 +287,35 @@ def mark_position_alerted(position_id: int, stop: bool = False, target: bool = F
             if target:
                 pos.alerted_target = True
             session.commit()
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Chat history (web dashboard command chat)
+# ---------------------------------------------------------------------------
+
+def save_chat_message(role: str, content: str):
+    session = _session()
+    try:
+        session.add(ChatMessage(role=role, content=content))
+        session.commit()
+    finally:
+        session.close()
+
+
+def load_chat_history(limit: int = 100) -> pd.DataFrame:
+    session = _session()
+    try:
+        rows = (
+            session.query(ChatMessage)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        rows.reverse()
+        return pd.DataFrame([{
+            "id": r.id, "role": r.role, "content": r.content, "created_at": r.created_at,
+        } for r in rows])
     finally:
         session.close()
